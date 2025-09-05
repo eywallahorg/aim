@@ -829,45 +829,732 @@
 
                 // Mouse events
                 document.addEventListener('mousemove', (e) => {
-                    if (!this.gameRunning) return;
-                    
-                    this.mouse.x = (e.clientX / window.innerWidth) * 2 - 1;
-                    this.mouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
-                    
-                    this.mousePosition.x = this.mouse.x;
-                    this.mousePosition.y = this.mouse.y;
+                    if (this.gameRunning && document.pointerLockElement === document.body) {
+                        const sensitivity = 0.002;
+                        this.camera.rotation.y -= e.movementX * sensitivity;
+                        this.camera.rotation.x -= e.movementY * sensitivity;
+                        this.camera.rotation.x = Math.max(-Math.PI/2, Math.min(Math.PI/2, this.camera.rotation.x));
+                    }
                 });
+            }
 
-                document.addEventListener('click', () => {
-                    if (this.gameRunning) this.shoot();
-                });
+            checkMobile() {
+                const isMobile = window.innerWidth <= 768 || 'ontouchstart' in window;
+                const mobileControls = document.querySelector('.mobile-controls');
+                if (isMobile) {
+                    mobileControls.style.display = 'block';
+                    this.setupMobileControls();
+                }
+            }
 
-                // Window resize
-                window.addEventListener('resize', () => {
-                    this.camera.aspect = window.innerWidth / window.innerHeight;
-                    this.camera.updateProjectionMatrix();
-                    this.renderer.setSize(window.innerWidth, window.innerHeight);
-                });
+            isMobile() {
+                return window.innerWidth <= 768 || 'ontouchstart' in window;
+            }
 
-                // Game UI events
-                document.getElementById('startGameBtn').addEventListener('click', () => this.startGame());
-                document.getElementById('restartBtn').addEventListener('click', () => this.restartGame());
+            setupMobileControls() {
+                const joystickBase = document.querySelector('.joystick-base');
+                const joystickKnob = document.getElementById('joystickKnob');
+                const fireButton = document.getElementById('fireButton');
 
-                // Difficulty selection
-                document.querySelectorAll('.difficulty-btn').forEach(btn => {
-                    btn.addEventListener('click', () => {
-                        document.querySelectorAll('.difficulty-btn').forEach(b => b.classList.remove('active'));
-                        btn.classList.add('active');
-                        this.difficulty = btn.dataset.difficulty;
-                    });
-                });
+                let joystickActive = false;
+                let joystickCenter = { x: 0, y: 0 };
 
-                // Pointer lock for desktop
-                document.addEventListener('click', () => {
-                    if (this.gameRunning && !this.isMobile()) {
-                        document.body.requestPointerLock();
+                // Touch controls for camera
+                let touchStartX = 0;
+                let touchStartY = 0;
+                let isLookTouch = false;
+
+                document.addEventListener('touchstart', (e) => {
+                    if (e.touches.length === 1 && !this.isJoystickTouch(e.touches[0])) {
+                        isLookTouch = true;
+                        touchStartX = e.touches[0].clientX;
+                        touchStartY = e.touches[0].clientY;
                     }
                 });
 
-                document.addEventListener('mousemove', (e) => {
-                    if
+                document.addEventListener('touchmove', (e) => {
+                    if (isLookTouch && e.touches.length === 1) {
+                        e.preventDefault();
+                        const sensitivity = 0.005;
+                        const deltaX = e.touches[0].clientX - touchStartX;
+                        const deltaY = e.touches[0].clientY - touchStartY;
+                        
+                        this.camera.rotation.y -= deltaX * sensitivity;
+                        this.camera.rotation.x -= deltaY * sensitivity;
+                        this.camera.rotation.x = Math.max(-Math.PI/2, Math.min(Math.PI/2, this.camera.rotation.x));
+                        
+                        touchStartX = e.touches[0].clientX;
+                        touchStartY = e.touches[0].clientY;
+                    }
+                });
+
+                document.addEventListener('touchend', () => {
+                    isLookTouch = false;
+                });
+
+                // Joystick events
+                const handleJoystickStart = (e) => {
+                    joystickActive = true;
+                    const rect = joystickBase.getBoundingClientRect();
+                    joystickCenter.x = rect.left + rect.width / 2;
+                    joystickCenter.y = rect.top + rect.height / 2;
+                };
+
+                const handleJoystickMove = (e) => {
+                    if (!joystickActive) return;
+                    
+                    e.preventDefault();
+                    const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+                    const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+                    
+                    const deltaX = clientX - joystickCenter.x;
+                    const deltaY = clientY - joystickCenter.y;
+                    const distance = Math.min(50, Math.sqrt(deltaX * deltaX + deltaY * deltaY));
+                    const angle = Math.atan2(deltaY, deltaX);
+                    
+                    const knobX = Math.cos(angle) * distance;
+                    const knobY = Math.sin(angle) * distance;
+                    
+                    joystickKnob.style.transform = `translate(${knobX - 30}px, ${knobY - 30}px)`;
+                    
+                    this.joystick.active = distance > 15;
+                    this.joystick.x = knobX / 50;
+                    this.joystick.y = knobY / 50;
+                };
+
+                const handleJoystickEnd = () => {
+                    joystickActive = false;
+                    this.joystick.active = false;
+                    joystickKnob.style.transform = 'translate(-30px, -30px)';
+                };
+
+                joystickBase.addEventListener('touchstart', handleJoystickStart);
+                document.addEventListener('touchmove', handleJoystickMove);
+                document.addEventListener('touchend', handleJoystickEnd);
+
+                // Fire button
+                fireButton.addEventListener('click', () => this.shoot());
+                fireButton.addEventListener('touchstart', (e) => {
+                    e.preventDefault();
+                    this.shoot();
+                });
+            }
+
+            isJoystickTouch(touch) {
+                const joystickBase = document.querySelector('.joystick-base');
+                const rect = joystickBase.getBoundingClientRect();
+                return touch.clientX >= rect.left && touch.clientX <= rect.right && 
+                       touch.clientY >= rect.top && touch.clientY <= rect.bottom;
+            }
+
+            startGame() {
+                document.getElementById('startScreen').style.display = 'none';
+                this.gameRunning = true;
+                this.score = 0;
+                this.timer = 45;
+                this.playerHealth = 100;
+                this.spikeActive = false;
+                this.spikeTimer = 0;
+                this.bullets = [];
+                
+                // Reset camera position
+                this.camera.position.copy(this.player.position);
+                this.camera.rotation.set(0, 0, 0);
+                
+                this.spawnEnemies();
+                this.updateUI();
+                
+                this.gameInterval = setInterval(() => this.gameLoop(), 1000/60);
+                this.timerInterval = setInterval(() => this.updateTimer(), 1000);
+            }
+
+            spawnEnemies() {
+                this.enemies.forEach(enemy => {
+                    if (enemy.mesh) this.scene.remove(enemy.mesh);
+                });
+                this.enemies = [];
+                
+                const enemyCount = 5;
+                const siteNames = ['A', 'B', 'C'];
+                
+                for (let i = 0; i < enemyCount; i++) {
+                    const targetSite = siteNames[Math.floor(Math.random() * siteNames.length)];
+                    const enemy = this.createEnemy(targetSite);
+                    this.enemies.push(enemy);
+                    this.scene.add(enemy.mesh);
+                }
+            }
+
+            createEnemy(targetSite) {
+                const spawnPositions = {
+                    A: [new THREE.Vector3(-20, 1.8, -25), new THREE.Vector3(-25, 1.8, -20)],
+                    B: [new THREE.Vector3(-5, 1.8, -25), new THREE.Vector3(5, 1.8, -25)],
+                    C: [new THREE.Vector3(20, 1.8, -25), new THREE.Vector3(25, 1.8, -20)]
+                };
+
+                const spawns = spawnPositions[targetSite];
+                const spawnPos = spawns[Math.floor(Math.random() * spawns.length)];
+                
+                const difficultySettings = {
+                    easy: { speed: 0.02, health: 100, reaction: 3000, accuracy: 0.3 },
+                    medium: { speed: 0.04, health: 100, reaction: 1500, accuracy: 0.6 },
+                    hard: { speed: 0.06, health: 100, reaction: 800, accuracy: 0.8 }
+                };
+
+                const settings = difficultySettings[this.difficulty];
+                
+                // Create enemy mesh
+                const enemyGroup = new THREE.Group();
+                
+                // Body
+                const bodyGeometry = new THREE.CapsuleGeometry(0.3, 1.4, 4, 8);
+                const bodyMaterial = new THREE.MeshLambertMaterial({ color: 0xff4757 });
+                const bodyMesh = new THREE.Mesh(bodyGeometry, bodyMaterial);
+                bodyMesh.castShadow = true;
+                enemyGroup.add(bodyMesh);
+                
+                // Head
+                const headGeometry = new THREE.SphereGeometry(0.2, 8, 6);
+                const headMaterial = new THREE.MeshLambertMaterial({ color: 0xff6b6b });
+                const headMesh = new THREE.Mesh(headGeometry, headMaterial);
+                headMesh.position.y = 0.9;
+                headMesh.castShadow = true;
+                enemyGroup.add(headMesh);
+                
+                // Weapon
+                const weaponGeometry = new THREE.BoxGeometry(0.1, 0.1, 0.6);
+                const weaponMaterial = new THREE.MeshLambertMaterial({ color: 0x333333 });
+                const weaponMesh = new THREE.Mesh(weaponGeometry, weaponMaterial);
+                weaponMesh.position.set(0.3, 0.5, 0.3);
+                enemyGroup.add(weaponMesh);
+                
+                enemyGroup.position.copy(spawnPos);
+                
+                return {
+                    mesh: enemyGroup,
+                    targetSite,
+                    targetPosition: this.sites[targetSite].position.clone(),
+                    health: settings.health,
+                    maxHealth: settings.health,
+                    speed: settings.speed,
+                    state: 'moving', // moving, planting, defending, dead
+                    plantTimer: 0,
+                    lastShot: 0,
+                    reactionTime: settings.reaction,
+                    accuracy: settings.accuracy,
+                    path: this.generatePath(spawnPos, this.sites[targetSite].position),
+                    pathIndex: 0
+                };
+            }
+
+            generatePath(start, end) {
+                // Simple pathfinding - direct path with some waypoints
+                const path = [start.clone()];
+                
+                // Add intermediate waypoints
+                const mid1 = start.clone().lerp(end, 0.3);
+                mid1.y = 1.8;
+                path.push(mid1);
+                
+                const mid2 = start.clone().lerp(end, 0.7);
+                mid2.y = 1.8;
+                path.push(mid2);
+                
+                path.push(end.clone());
+                return path;
+            }
+
+            gameLoop() {
+                if (!this.gameRunning) return;
+                
+                this.updatePlayer();
+                this.updateEnemies();
+                this.updateBullets();
+                this.checkCollisions();
+                this.checkWinCondition();
+                this.updateCamera();
+            }
+
+            updatePlayer() {
+                if (!this.gameRunning) return;
+                
+                const speed = 0.1;
+                const moveVector = new THREE.Vector3();
+
+                // Keyboard input
+                if (this.keys['w'] || this.keys['arrowup']) moveVector.z -= 1;
+                if (this.keys['s'] || this.keys['arrowdown']) moveVector.z += 1;
+                if (this.keys['a'] || this.keys['arrowleft']) moveVector.x -= 1;
+                if (this.keys['d'] || this.keys['arrowright']) moveVector.x += 1;
+
+                // Mobile joystick input
+                if (this.joystick.active) {
+                    moveVector.x += this.joystick.x;
+                    moveVector.z += this.joystick.y;
+                }
+
+                // Apply camera rotation to movement
+                if (moveVector.length() > 0) {
+                    moveVector.normalize();
+                    moveVector.multiplyScalar(speed);
+                    
+                    // Rotate movement based on camera direction
+                    const cameraDirection = new THREE.Vector3();
+                    this.camera.getWorldDirection(cameraDirection);
+                    cameraDirection.y = 0;
+                    cameraDirection.normalize();
+                    
+                    const right = new THREE.Vector3();
+                    right.crossVectors(cameraDirection, new THREE.Vector3(0, 1, 0));
+                    
+                    const finalMove = new THREE.Vector3();
+                    finalMove.addScaledVector(cameraDirection, -moveVector.z);
+                    finalMove.addScaledVector(right, moveVector.x);
+                    
+                    this.player.position.add(finalMove);
+                    
+                    // Keep player in bounds
+                    this.player.position.x = Math.max(-23, Math.min(23, this.player.position.x));
+                    this.player.position.z = Math.max(-23, Math.min(23, this.player.position.z));
+                }
+            }
+
+            updateEnemies() {
+                this.enemies.forEach((enemy) => {
+                    if (enemy.health <= 0) {
+                        enemy.state = 'dead';
+                        enemy.mesh.visible = false;
+                        return;
+                    }
+
+                    if (enemy.state === 'moving') {
+                        this.moveEnemyAlongPath(enemy);
+                    } else if (enemy.state === 'planting') {
+                        enemy.plantTimer += 1000 / 60;
+                        
+                        // Visual planting indicator
+                        enemy.mesh.rotation.y += 0.05;
+                        
+                        if (enemy.plantTimer >= 7000) { // 7 seconds
+                            this.spikeActive = true;
+                            this.spikeTimer = 45000; // 45 seconds
+                            enemy.state = 'defending';
+                            this.showSpikeWarning();
+                        }
+                    }
+
+                    // AI shooting
+                    this.handleEnemyShooting(enemy);
+                    
+                    // Update health bar visual
+                    this.updateEnemyHealthBar(enemy);
+                });
+            }
+
+            moveEnemyAlongPath(enemy) {
+                if (enemy.pathIndex >= enemy.path.length - 1) {
+                    enemy.state = 'planting';
+                    enemy.plantTimer = 0;
+                    return;
+                }
+
+                const targetPos = enemy.path[enemy.pathIndex + 1];
+                const currentPos = enemy.mesh.position;
+                const direction = targetPos.clone().sub(currentPos).normalize();
+                
+                currentPos.add(direction.multiplyScalar(enemy.speed));
+                
+                // Look at target
+                enemy.mesh.lookAt(targetPos);
+                
+                // Check if reached waypoint
+                if (currentPos.distanceTo(targetPos) < 0.5) {
+                    enemy.pathIndex++;
+                }
+            }
+
+            handleEnemyShooting(enemy) {
+                if (enemy.health <= 0) return;
+                
+                const playerPos = this.player.position;
+                const enemyPos = enemy.mesh.position;
+                const distance = playerPos.distanceTo(enemyPos);
+                
+                if (distance < 15 && Date.now() - enemy.lastShot > enemy.reactionTime) {
+                    enemy.lastShot = Date.now();
+                    this.enemyShoot(enemy);
+                }
+            }
+
+            enemyShoot(enemy) {
+                const direction = this.player.position.clone().sub(enemy.mesh.position).normalize();
+                
+                // Add inaccuracy based on difficulty
+                const inaccuracy = (1 - enemy.accuracy) * 0.5;
+                direction.x += (Math.random() - 0.5) * inaccuracy;
+                direction.z += (Math.random() - 0.5) * inaccuracy;
+                direction.normalize();
+                
+                this.createBullet(enemy.mesh.position.clone(), direction, false, 25);
+                
+                // Muzzle flash effect
+                this.createMuzzleFlash(enemy.mesh.position);
+            }
+
+            updateBullets() {
+                this.bullets = this.bullets.filter(bullet => {
+                    bullet.position.add(bullet.velocity);
+                    bullet.mesh.position.copy(bullet.position);
+                    
+                    // Remove bullets that are too far or hit ground
+                    if (bullet.position.y < 0 || bullet.position.length() > 50) {
+                        this.scene.remove(bullet.mesh);
+                        return false;
+                    }
+                    
+                    return true;
+                });
+            }
+
+            shoot() {
+                if (!this.gameRunning) return;
+                
+                const direction = new THREE.Vector3(0, 0, -1);
+                direction.applyQuaternion(this.camera.quaternion);
+                
+                this.createBullet(this.camera.position.clone(), direction, true, 100);
+                this.createMuzzleFlash(this.camera.position);
+            }
+
+            createBullet(position, direction, fromPlayer, damage) {
+                const bulletGeometry = new THREE.SphereGeometry(0.02, 4, 4);
+                const bulletMaterial = new THREE.MeshBasicMaterial({ 
+                    color: fromPlayer ? 0x00ff88 : 0xff4757 
+                });
+                const bulletMesh = new THREE.Mesh(bulletGeometry, bulletMaterial);
+                bulletMesh.position.copy(position);
+                
+                this.scene.add(bulletMesh);
+                
+                this.bullets.push({
+                    mesh: bulletMesh,
+                    position: position.clone(),
+                    velocity: direction.clone().multiplyScalar(0.8),
+                    fromPlayer,
+                    damage
+                });
+            }
+
+            createMuzzleFlash(position) {
+                const flashGeometry = new THREE.SphereGeometry(0.1, 6, 4);
+                const flashMaterial = new THREE.MeshBasicMaterial({ 
+                    color: 0xffff88,
+                    transparent: true,
+                    opacity: 0.8
+                });
+                const flash = new THREE.Mesh(flashGeometry, flashMaterial);
+                flash.position.copy(position);
+                
+                this.scene.add(flash);
+                
+                // Remove flash after short duration
+                setTimeout(() => {
+                    this.scene.remove(flash);
+                }, 100);
+            }
+
+            checkCollisions() {
+                this.bullets.forEach((bullet, bulletIndex) => {
+                    if (bullet.fromPlayer) {
+                        // Check enemy hits
+                        this.enemies.forEach((enemy) => {
+                            if (enemy.health > 0 && 
+                                bullet.position.distanceTo(enemy.mesh.position) < 0.8) {
+                                
+                                enemy.health -= bullet.damage;
+                                this.scene.remove(bullet.mesh);
+                                this.bullets.splice(bulletIndex, 1);
+                                
+                                this.showHitMarker();
+                                this.createBloodEffect(enemy.mesh.position);
+                                
+                                if (enemy.health <= 0) {
+                                    this.score += 100;
+                                    this.updateUI();
+                                    enemy.state = 'dead';
+                                    enemy.mesh.visible = false;
+                                }
+                            }
+                        });
+                    } else {
+                        // Check player hits
+                        if (bullet.position.distanceTo(this.player.position) < 0.5) {
+                            this.playerHealth -= bullet.damage;
+                            this.scene.remove(bullet.mesh);
+                            this.bullets.splice(bulletIndex, 1);
+                            
+                            if (this.playerHealth <= 0) {
+                                this.endGame(false, 'Öldürüldün!');
+                            }
+                            
+                            this.updateUI();
+                            this.showDamageEffect();
+                        }
+                    }
+                });
+            }
+
+            showHitMarker() {
+                const hitMarker = document.createElement('div');
+                hitMarker.className = 'hit-marker show';
+                hitMarker.style.left = '50%';
+                hitMarker.style.top = '50%';
+                hitMarker.style.transform = 'translate(-50%, -50%)';
+                
+                document.body.appendChild(hitMarker);
+                
+                setTimeout(() => {
+                    document.body.removeChild(hitMarker);
+                }, 300);
+            }
+
+            createBloodEffect(position) {
+                const particleCount = 10;
+                const particles = new THREE.Group();
+                
+                for (let i = 0; i < particleCount; i++) {
+                    const particle = new THREE.Mesh(
+                        new THREE.SphereGeometry(0.02, 4, 4),
+                        new THREE.MeshBasicMaterial({ color: 0x8B0000 })
+                    );
+                    
+                    particle.position.copy(position);
+                    particle.velocity = new THREE.Vector3(
+                        (Math.random() - 0.5) * 0.2,
+                        Math.random() * 0.1,
+                        (Math.random() - 0.5) * 0.2
+                    );
+                    
+                    particles.add(particle);
+                }
+                
+                this.scene.add(particles);
+                
+                // Animate and remove particles
+                const animateParticles = () => {
+                    particles.children.forEach(particle => {
+                        particle.position.add(particle.velocity);
+                        particle.velocity.y -= 0.005; // gravity
+                    });
+                };
+                
+                const particleInterval = setInterval(animateParticles, 16);
+                
+                setTimeout(() => {
+                    clearInterval(particleInterval);
+                    this.scene.remove(particles);
+                }, 2000);
+            }
+
+            showDamageEffect() {
+                document.body.style.boxShadow = 'inset 0 0 100px rgba(255, 0, 0, 0.3)';
+                setTimeout(() => {
+                    document.body.style.boxShadow = '';
+                }, 200);
+            }
+
+            showSpikeWarning() {
+                const warning = document.createElement('div');
+                warning.className = 'spike-warning';
+                warning.innerHTML = '💣 SPIKE PLANTED! 💣<br>Eliminate all enemies!';
+                document.body.appendChild(warning);
+                
+                setTimeout(() => {
+                    if (document.body.contains(warning)) {
+                        document.body.removeChild(warning);
+                    }
+                }, 3000);
+            }
+
+            updateEnemyHealthBar(enemy) {
+                // This would typically be done with a more sophisticated system
+                // For now, we'll change the enemy color based on health
+                const healthRatio = enemy.health / enemy.maxHealth;
+                const bodyMaterial = enemy.mesh.children[0].material;
+                
+                if (healthRatio > 0.7) {
+                    bodyMaterial.color.setHex(0xff4757);
+                } else if (healthRatio > 0.3) {
+                    bodyMaterial.color.setHex(0xff6b47);
+                } else {
+                    bodyMaterial.color.setHex(0xff8888);
+                }
+            }
+
+            checkWinCondition() {
+                const aliveEnemies = this.enemies.filter(e => e.health > 0).length;
+                
+                if (aliveEnemies === 0) {
+                    this.endGame(true, 'Tüm düşmanları etkisiz hale getirdin!');
+                } else if (this.timer <= 0) {
+                    this.endGame(false, 'Süre doldu!');
+                } else if (this.spikeActive && this.spikeTimer <= 0) {
+                    this.endGame(false, 'Spike patladı!');
+                } else if (this.playerHealth <= 0) {
+                    this.endGame(false, 'Öldürüldün!');
+                }
+            }
+
+            updateCamera() {
+                this.camera.position.copy(this.player.position);
+            }
+
+            updateTimer() {
+                if (!this.gameRunning) return;
+                
+                if (this.spikeActive) {
+                    this.spikeTimer -= 1000;
+                    const seconds = Math.ceil(this.spikeTimer / 1000);
+                    document.getElementById('timerValue').textContent = seconds;
+                    
+                    if (seconds <= 10) {
+                        document.getElementById('timerValue').classList.add('timer-critical');
+                    }
+                } else {
+                    this.timer--;
+                    document.getElementById('timerValue').textContent = this.timer;
+                    
+                    if (this.timer <= 10) {
+                        document.getElementById('timerValue').classList.add('timer-critical');
+                    }
+                }
+            }
+
+            updateUI() {
+                document.getElementById('scoreValue').textContent = this.score;
+                document.getElementById('playerHealth').textContent = Math.max(0, this.playerHealth);
+                const aliveEnemies = this.enemies.filter(e => e.health > 0).length;
+                document.getElementById('enemiesLeft').textContent = aliveEnemies;
+                
+                // Update health color
+                const healthElement = document.getElementById('playerHealth');
+                if (this.playerHealth > 70) {
+                    healthElement.style.color = '#00ff88';
+                } else if (this.playerHealth > 30) {
+                    healthElement.style.color = '#ffa502';
+                } else {
+                    healthElement.style.color = '#ff4757';
+                }
+            }
+
+            endGame(won, message) {
+                this.gameRunning = false;
+                clearInterval(this.gameInterval);
+                clearInterval(this.timerInterval);
+                
+                document.getElementById('gameResult').textContent = won ? 'Kazandın!' : 'Kaybettin!';
+                document.getElementById('gameResult').style.color = won ? '#00ff88' : '#ff4757';
+                document.getElementById('finalScore').textContent = this.score;
+                document.getElementById('gameOverScreen').style.display = 'flex';
+                
+                // Exit pointer lock
+                if (document.pointerLockElement) {
+                    document.exitPointerLock();
+                }
+                
+                this.saveScore(won);
+            }
+
+            restartGame() {
+                document.getElementById('gameOverScreen').style.display = 'none';
+                document.getElementById('startScreen').style.display = 'flex';
+                document.getElementById('timerValue').classList.remove('timer-critical');
+                
+                // Clean up bullets and effects
+                this.bullets.forEach(bullet => this.scene.remove(bullet.mesh));
+                this.bullets = [];
+                
+                this.enemies.forEach(enemy => {
+                    if (enemy.mesh) this.scene.remove(enemy.mesh);
+                });
+                this.enemies = [];
+            }
+
+            saveScore(won) {
+                const scoreData = {
+                    score: this.score,
+                    difficulty: this.difficulty,
+                    won: won,
+                    timestamp: new Date().toISOString(),
+                    sessionId: this.generateSessionId(),
+                    gameMode: '3D'
+                };
+
+                // Save to localStorage
+                const scores = JSON.parse(localStorage.getItem('valorantScores3D') || '[]');
+                scores.push(scoreData);
+                
+                if (scores.length > 100) {
+                    scores.splice(0, scores.length - 100);
+                }
+                
+                localStorage.setItem('valorantScores3D', JSON.stringify(scores));
+                console.log('Score saved:', scoreData);
+            }
+
+            generateSessionId() {
+                return Date.now().toString(36) + Math.random().toString(36).substr(2);
+            }
+
+            animate() {
+                requestAnimationFrame(() => this.animate());
+                
+                if (this.gameRunning) {
+                    this.renderer.render(this.scene, this.camera);
+                } else {
+                    this.renderer.render(this.scene, this.camera);
+                }
+            }
+        }
+
+        // Initialize game when page loads
+        let game;
+        
+        window.addEventListener('load', () => {
+            // Show loading progress
+            let progress = 0;
+            const progressBar = document.getElementById('loadingProgress');
+            
+            const updateProgress = () => {
+                progress += Math.random() * 20;
+                if (progress > 100) progress = 100;
+                progressBar.style.width = progress + '%';
+                
+                if (progress < 100) {
+                    setTimeout(updateProgress, 100);
+                } else {
+                    // Initialize game after loading is complete
+                    setTimeout(() => {
+                        game = new Game3D();
+                    }, 500);
+                }
+            };
+            
+            updateProgress();
+        });
+
+        // Service Worker Registration
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('sw.js')
+                    .then((registration) => {
+                        console.log('SW registered: ', registration);
+                    })
+                    .catch((registrationError) => {
+                        console.log('SW registration failed: ', registrationError);
+                    });
+            });
+        }
+    </script>
+</body>
+</html>
